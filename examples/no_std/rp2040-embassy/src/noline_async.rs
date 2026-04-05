@@ -1,3 +1,4 @@
+use core::fmt::Formatter;
 use embassy_rp::usb::{Driver, Instance};
 use embassy_usb::{
     class::cdc_acm::{ControlChanged, Receiver, Sender},
@@ -34,6 +35,14 @@ where
 
 #[derive(Debug)]
 struct Error(());
+
+impl core::error::Error for Error {}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        core::write!(f, "An error occured")
+    }
+}
 
 impl From<EndpointError> for Error {
     fn from(_value: EndpointError) -> Self {
