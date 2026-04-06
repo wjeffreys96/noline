@@ -10,8 +10,6 @@ use {defmt_rtt as _, panic_probe as _};
 
 use bsp::hal::{clocks::init_clocks_and_plls, pac, usb::UsbBus, watchdog::Watchdog};
 
-use core::fmt::Write as FmtWrite;
-
 use noline::builder::EditorBuilder;
 use noline::error::NolineError;
 
@@ -24,25 +22,15 @@ type SP<'a> = SerialPort<'a, UsbBus, DefaultBufferStore, DefaultBufferStore>;
 struct SerialWrapper<'a> {
     device: UsbDevice<'a, UsbBus>,
     serial: SP<'a>,
-    ready: bool,
 }
 
 impl<'a> SerialWrapper<'a> {
     fn new(device: UsbDevice<'a, UsbBus>, serial: SP<'a>) -> Self {
-        Self {
-            device,
-            serial,
-            ready: false,
-        }
+        Self { device, serial }
     }
 
     fn poll(&mut self) -> bool {
         self.device.poll(&mut [&mut self.serial])
-    }
-
-    fn is_ready(&mut self) -> bool {
-        self.ready = self.ready | self.poll();
-        self.ready
     }
 }
 
@@ -52,6 +40,14 @@ struct Error(UsbError);
 impl From<UsbError> for Error {
     fn from(value: UsbError) -> Self {
         Self(value)
+    }
+}
+
+impl core::error::Error for Error {}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::write!(f, "an error occured")
     }
 }
 
@@ -67,52 +63,53 @@ impl<'a> ErrorType for SerialWrapper<'a> {
 
 impl<'a> ReadReady for SerialWrapper<'a> {
     fn read_ready(&mut self) -> Result<bool, Self::Error> {
-        Ok(self.is_ready() | self.serial.dtr() | self.serial.rts())
+        // not used in this example
+        Ok(true)
     }
 }
 
 impl<'a> Read for SerialWrapper<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         loop {
-            while !self.read_ready()? {
-                continue;
+            self.poll();
+            match self.serial.read(buf) {
+                Ok(0) => continue,
+                Ok(n) => return Ok(n),
+                Err(UsbError::WouldBlock) => continue,
+                Err(e) => return Err(Error(e)),
             }
-
-            let res = self.serial.read(buf);
-            if res == Err(UsbError::WouldBlock) {
-                self.ready = false;
-                continue;
-            }
-
-            break Ok(res?);
         }
     }
 }
 
 impl<'a> WriteReady for SerialWrapper<'a> {
     fn write_ready(&mut self) -> Result<bool, Self::Error> {
-        Ok(self.is_ready() | self.serial.dtr() | self.serial.rts())
+        // not used in this example
+        Ok(true)
     }
 }
+
 impl<'a> Write for SerialWrapper<'a> {
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         loop {
-            while !self.write_ready()? {
-                continue;
+            self.poll();
+            match self.serial.write(buf) {
+                Ok(n) => return Ok(n),
+                Err(UsbError::WouldBlock) => continue,
+                Err(e) => return Err(Error(e)),
             }
-
-            let res = self.serial.write(buf);
-            if res == Err(UsbError::WouldBlock) {
-                self.ready = false;
-                continue;
-            }
-
-            break Ok(res?);
         }
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(self.serial.flush()?)
+        loop {
+            self.poll();
+            match self.serial.flush() {
+                Ok(()) => return Ok(()),
+                Err(UsbError::WouldBlock) => continue,
+                Err(e) => return Err(Error(e)),
+            }
+        }
     }
 }
 
@@ -120,12 +117,15 @@ impl<'a> Write for SerialWrapper<'a> {
 fn main() -> ! {
     info!("Starting...");
 
+    info!("Grabbing PAC");
     // Grab our singleton objects
     let mut pac = pac::Peripherals::take().unwrap();
 
+    info!("Setting up watchdog");
     // Set up the watchdog driver - needed by the clock setup code
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
+    info!("Setting up clock");
     // Configure the clocks
     //
     // The default is to generate a 125 MHz system clock
@@ -141,6 +141,7 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
+    info!("Setting up usb driver");
     // Set up the USB driver
     let usb_bus = UsbBusAllocator::new(UsbBus::new(
         pac.USBCTRL_REGS,
@@ -150,6 +151,7 @@ fn main() -> ! {
         &mut pac.RESETS,
     ));
 
+    info!("Setting up serial driver");
     // Set up the USB Communications Class Device driver
     let serial = SerialPort::new(&usb_bus);
 
@@ -169,6 +171,16 @@ fn main() -> ! {
 
     info!("Waiting for connection");
 
+    // Wait for host to open the port (DTR signal)
+    loop {
+        io.poll();
+        if io.serial.dtr() {
+            break;
+        }
+    }
+
+    info!("Connected");
+
     let mut buffer = [0; 128];
     let mut history = [0; 128];
     let mut editor = EditorBuilder::from_slice(&mut buffer)
@@ -187,11 +199,15 @@ fn main() -> ! {
                 }
             }
             Err(err) => {
-                let error = match err {
-                    NolineError::IoError(_) => "IoError",
-                    NolineError::ParserError => "ParserError",
-                    NolineError::Aborted => "Aborted",
+                let error;
+
+                match err {
+                    NolineError::IoError(_) => error = "IoError",
+                    NolineError::ParserError => error = "ParserError",
+                    NolineError::Aborted => error = "Aborted",
                 };
+
+                error!("{}", error);
                 writeln!(io, "Error: {}\r", error).unwrap();
             }
         }
