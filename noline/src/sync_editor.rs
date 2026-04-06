@@ -102,7 +102,7 @@ where
         &'a mut self,
         prompt: impl Into<Prompt<I>>,
         io: &mut IO,
-    ) -> Result<&str, NolineError>
+    ) -> Result<&'a str, NolineError>
     where
         IO: Read + Write,
         I: Iterator<Item = &'item str> + Clone,
