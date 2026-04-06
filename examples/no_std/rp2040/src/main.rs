@@ -47,7 +47,7 @@ impl core::error::Error for Error {}
 
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::write!(f, "an error occured")
+        core::write!(f, "an error occurred")
     }
 }
 
