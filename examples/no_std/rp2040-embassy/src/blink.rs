@@ -1,4 +1,4 @@
-use embassy_rp::{gpio, Peri};
+use embassy_rp::{Peri, gpio};
 use embassy_time::{Duration, Timer};
 use gpio::{AnyPin, Level, Output};
 

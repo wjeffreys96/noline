@@ -85,7 +85,6 @@ async fn main(spawner: Spawner) {
     // Run the USB device.
     spawner.spawn(unwrap!(usb_task(usb)));
 
-
     // Run the CLI
     cli(sender, recvr, control).await;
 
